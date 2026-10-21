@@ -20,7 +20,7 @@ implicit none
 private
 
 ! Public subroutines visible to other modules
-public :: write_to_file, write_to_file_latlon
+public :: write_to_file, write_to_file_latlon, project_ull_to_uxyz, project_uxyz_to_ull
 
 contains
 
@@ -658,6 +658,63 @@ subroutine project_to_edges(mpas_mesh,zonal,meridional,edgesOnCell,edgeNormalVec
    deallocate(east,north)
 
 end subroutine project_to_edges
+
+
+subroutine project_ull_to_uxyz(mpas_mesh,zonal,meridional,ux,uy,uz)
+
+   type(mpas_mesh_type), intent(in)  :: mpas_mesh
+   real,  dimension(nz_input,mpas_mesh%nCells), intent(in) :: zonal, meridional
+   real,  dimension(nz_input,mpas_mesh%nCells), intent(inout) :: ux, uy, uz 
+
+   integer :: i,k
+   real :: sinlat, sinlon, coslat, coslon
+
+   ! This code projects zonal/meridional winds to Cartesian coordinates (x,y,z) 
+   ux = 0.0
+   uy = 0.0
+   uz = 0.0
+   do i = 1, mpas_mesh%nCells
+	 sinlat = sin(mpas_mesh%latCell(i))
+	 sinlon = sin(mpas_mesh%lonCell(i))
+	 coslat = cos(mpas_mesh%latCell(i))
+	 coslon = cos(mpas_mesh%lonCell(i))
+         do k = 1, nz_input
+           ux(k,i) = meridional(k,i)*sinlon - zonal(k,i)*sinlat*coslon
+           uy(k,i) = meridional(k,i)*coslon - zonal(k,i)*sinlat*sinlon
+           uz(k,i) = zonal(k,i)*coslat 
+         enddo
+   enddo
+
+end subroutine project_ull_to_uxyz 
+
+
+subroutine project_uxyz_to_ull(mpas_mesh,ux,uy,uz,zonal,meridional)
+
+   type(mpas_mesh_type), intent(in)  :: mpas_mesh
+   real,  dimension(nz_input,mpas_mesh%nCells), intent(in) :: ux, uy, uz 
+   real,  dimension(nz_input,mpas_mesh%nCells), intent(inout) :: zonal, meridional
+
+   integer :: i,k
+   real :: sinlat, sinlon, coslat, coslon
+
+   ! This code projects Cartesian-coordinate winds back to zonal/meridional winds 
+   zonal = 0.0
+   meridional = 0.0
+   do i = 1, mpas_mesh%nCells
+	 sinlat = sin(mpas_mesh%latCell(i))
+	 sinlon = sin(mpas_mesh%lonCell(i))
+	 coslat = cos(mpas_mesh%latCell(i))
+	 coslon = cos(mpas_mesh%lonCell(i))
+         do k = 1, nz_input
+           zonal(k,i) = -ux(k,i)*sinlon + uy(k,i)*coslon
+           meridional(k,i) = -ux(k,i)*sinlon*coslat - uy(k,i)*sinlon*sinlat + uz(k,i)*coslon
+         enddo
+   enddo
+
+end subroutine project_uxyz_to_ull
+
+
+
 
 subroutine r3_normalize(ax, ay, az) !CSS added from DART models/mpas_atm/model_mod, in turn taken from MPAS
 
