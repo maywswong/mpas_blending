@@ -35,6 +35,7 @@ logical, public             :: output_blended_edge_normal_wind = .false. ! If tr
 logical, public             :: esmf_log = .false. ! logging information
 logical, public             :: smooth_going_downscale = .false. ! If true, run a smoother after interpolating downscale when reconstructing fields
 real,    public             :: smoother_dimensionless_coefficient = 0.0 ! Not used if smooth_going_downscale = .false.; parameter for smoothing
+logical, public             :: interp_cartesian_winds = .false. ! If true, convert zonal/meridional winds (if provided) to cartesian winds before interpolation, and then converted back to zonal/meridional winds for output 
 
 ! Public namelist &latlon_output variables
 logical, public            :: output_latlon_grid = .false. ! Switch to turn on lat-lon output (for diagnostics purposes)
@@ -55,7 +56,7 @@ namelist /share/ large_scale_file, small_scale_file, output_blended_filename, &
          variables_to_blend, grid_info_file, interp_method, interp_method_going_up, interp_method_going_down,extrap_method, &
          extrap_num_levels_creep, average_upscale_before_interp, output_intermediate_files_up, &
          output_intermediate_files_down, output_upscaled_data_on_native_mesh, output_blended_edge_normal_wind, esmf_log, &
-         smooth_going_downscale, smoother_dimensionless_coefficient
+         smooth_going_downscale, smoother_dimensionless_coefficient, interp_cartesian_winds 
 
 namelist /latlon_output/ output_latlon_grid, is_regional, extrap_method_latlon, &
                          nlat, nlon, lat_ll, lon_ll, dx_in_degrees, dy_in_degrees
@@ -111,6 +112,12 @@ subroutine read_setup_namelist(filename,localpet)
       interp_method_going_down = interp_method
       if (localpet == 0 ) write(*,*)'interp_method_going_down unset; setting to interp_method, which is ',interp_method
    endif
+
+   if ( interp_cartesian_winds ) then 
+      write(*,*) 'Conversion from zonal/meridional winds to Cartesian wind vectors prior to interpolation is turned on.' 
+   endif
+
+
 
 end subroutine read_setup_namelist
 
