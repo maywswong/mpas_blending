@@ -88,6 +88,12 @@ subroutine read_setup_namelist(filename,localpet)
    enddo
    if ( nvars_to_blend == 0 ) call error_handler("NO VARIABLES TO BLEND.", 1)
 
+   ! Adding an extra variable to blend - wCartesian
+   if ( interp_cartesian_winds ) then
+       nvars_to_blend = nvars_to_blend + 1
+       variables_to_blend(nvars_to_blend) = 'wCartesian'
+   endif
+
    ! Define the ESMF log type
    if (esmf_log) then
      LogType = ESMF_LOGKIND_MULTI_ON_ERROR
@@ -114,7 +120,7 @@ subroutine read_setup_namelist(filename,localpet)
    endif
 
    if ( interp_cartesian_winds ) then 
-      write(*,*) 'Conversion from zonal/meridional winds to Cartesian wind vectors prior to interpolation is turned on.' 
+      if (localpet == 0 ) write(*,*) 'Conversion from zonal/meridional winds to Cartesian wind vectors prior to interpolation is turned on.' 
    endif
 
 
