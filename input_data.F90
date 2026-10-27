@@ -295,9 +295,9 @@ subroutine project_ull_to_uxyz(mpas_mesh,zonal,meridional,ux,uy,uz)
 	 coslat = cos(mpas_mesh%latCell(i))
 	 coslon = cos(mpas_mesh%lonCell(i))
          do k = 1, nz_input
-           ux(k,i) = meridional(k,i)*sinlon - zonal(k,i)*sinlat*coslon
-           uy(k,i) = meridional(k,i)*coslon - zonal(k,i)*sinlat*sinlon
-           uz(k,i) = zonal(k,i)*coslat 
+           ux(k,i) = - zonal(k,i)*sinlon - meridional(k,i)*sinlat*coslon
+           uy(k,i) = zonal(k,i)*coslon - meridional(k,i)*sinlat*sinlon
+           uz(k,i) = meridional(k,i)*coslat 
          enddo
    enddo
 
@@ -307,8 +307,8 @@ end subroutine project_ull_to_uxyz
 subroutine project_uxyz_to_ull(mpas_mesh,ux,uy,uz,zonal,meridional)
 
    type(mpas_mesh_type), intent(in)  :: mpas_mesh
-   real,  dimension(nz_input,mpas_mesh%nCells), intent(in) :: ux, uy, uz 
-   real,  dimension(nz_input,mpas_mesh%nCells), intent(inout) :: zonal, meridional
+   real(esmf_kind_r8),  dimension(nz_input,mpas_mesh%nCells), intent(in) :: ux, uy, uz 
+   real(esmf_kind_r8),  dimension(nz_input,mpas_mesh%nCells), intent(inout) :: zonal, meridional
 
    integer :: i,k
    real :: sinlat, sinlon, coslat, coslon
@@ -323,7 +323,7 @@ subroutine project_uxyz_to_ull(mpas_mesh,ux,uy,uz,zonal,meridional)
 	 coslon = cos(mpas_mesh%lonCell(i))
          do k = 1, nz_input
            zonal(k,i) = -ux(k,i)*sinlon + uy(k,i)*coslon
-           meridional(k,i) = -ux(k,i)*sinlon*coslat - uy(k,i)*sinlon*sinlat + uz(k,i)*coslon
+           meridional(k,i) = -ux(k,i)*sinlat*coslon - uy(k,i)*sinlon*sinlat + uz(k,i)*coslat
          enddo
    enddo
 
