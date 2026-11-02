@@ -157,44 +157,9 @@ subroutine read_input_data(localpet,input_mesh,mpas_mesh,the_file,bundle)
 
              if ( save_zonal .ne. -1 .and. save_meridional .ne. -1 ) then 
 
-                 allocate(dummy_uzonal(nz,nCells_input,1))
-                 allocate(dummy_umerid(nz,nCells_input,1))
-                 allocate(dummy_ux(nz,nCells_input,1))
-                 allocate(dummy_uy(nz,nCells_input,1))
-                 allocate(dummy_uz(nz,nCells_input,1))
-
-		 ! read in uzonal and umeridional
-                 call get_netcdf_var(ncid,trim('uReconstructZonal'),(/1,1/),(/nz,nCells_input/),dummy_uzonal(:,:,1))
-                 call get_netcdf_var(ncid,trim('uReconstructMeridional'),(/1,1/),(/nz,nCells_input/),dummy_umerid(:,:,1))
-		 call project_ull_to_uxyz(mpas_mesh,dummy_uzonal(:,:,1),dummy_umerid(:,:,1),dummy_ux,dummy_uy,dummy_uz)
-
-		 ! assign (ux, uy, uz) to (uReconstructZonal, uReconstructMeridional, wCartesian)
-                 call ESMF_FieldGet(fields(save_zonal), farrayPtr=varptrx, rc=rc)
-		 if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
-                   call error_handler("IN FieldGet", rc)
-
-                 call ESMF_FieldGet(fields(save_meridional), farrayPtr=varptry, rc=rc)
-		 if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
-                   call error_handler("IN FieldGet", rc)
-
-                 call ESMF_FieldGet(fields(i), farrayPtr=varptrz, rc=rc)  ! index i = wCartesian
- 		 if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
-                   call error_handler("IN FieldGet", rc)
-
-		 do j = 1, nCellsPerPET
-                   varptrx(j,:) = dummy_ux(:,mpas_mesh%elemIDs(j),1)
-                   varptry(j,:) = dummy_uy(:,mpas_mesh%elemIDs(j),1)
-                   varptrz(j,:) = dummy_uz(:,mpas_mesh%elemIDs(j),1)
-                 enddo
-
-                 nullify(varptrx)
-                 nullify(varptry)
-                 nullify(varptrz)
-                 deallocate(dummy_uzonal)
-                 deallocate(dummy_umerid)
-                 deallocate(dummy_ux)
-                 deallocate(dummy_uy)
-                 deallocate(dummy_uz)
+                 ! this converts uzonal, umeridional to ux, uy, uz 
+                 ! -  replaces the variables varptrx,varptry with ux,uy values
+		 call project_ull_to_uxyz(mpas_mesh,fields(save_zonal),fields(save_meridional),fields(i))
 
 		 if (localpet == 0 ) write(*,*) "[interp_cartesian_winds] Converted uReconstructZonal, uReconstructMeridional to u_x, u_y, u_z."
 
@@ -276,30 +241,52 @@ end subroutine input_data_error_checks
 
 
 
-subroutine project_ull_to_uxyz(mpas_mesh,zonal,meridional,ux,uy,uz)
-
+subroutine project_ull_to_uxyz(mpas_mesh,field_zonal,field_meridional,field_wCartesian)
+   ! This code projects zonal/meridional winds to Cartesian coordinates (x,y,z)
+   ! field_zonal, field_meridional are input zonal/meridional winds, but are output
+   ! as ux, uy; field_wCartesian is output as uz
    type(mpas_mesh_type), intent(in)  :: mpas_mesh
-   real(esmf_kind_r8),  dimension(nz_input,mpas_mesh%nCells), intent(in) :: zonal, meridional
-   real(esmf_kind_r8),  dimension(nz_input,mpas_mesh%nCells), intent(inout) :: ux, uy, uz 
+   type(esmf_field), intent(in) :: field_zonal, field_meridional, field_wCartesian
 
-   integer :: i,k
-   real :: sinlat, sinlon, coslat, coslon
+   integer :: i,j,k
+   real(esmf_kind_r8) :: sinlat, sinlon, coslat, coslon, u, v
+   real(esmf_kind_r8), pointer :: varptrx(:,:), varptry(:,:), varptrz(:,:) 
+   integer :: rc, nCellsPerPET
 
-   ! This code projects zonal/meridional winds to Cartesian coordinates (x,y,z) 
-   ux = 0.0
-   uy = 0.0
-   uz = 0.0
-   do i = 1, mpas_mesh%nCells
+   nCellsPerPET = mpas_mesh%nCellsPerPET
+
+   ! read in uzonal and umeridional
+   call ESMF_FieldGet(field_zonal, farrayPtr=varptrx, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+
+   call ESMF_FieldGet(field_meridional, farrayPtr=varptry, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+
+   ! index i = wCartesian
+   call ESMF_FieldGet(field_wCartesian, farrayPtr=varptrz, rc=rc) 
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+
+   do j = 1, nCellsPerPET
+         i = mpas_mesh%elemIDs(j)
 	 sinlat = sin(mpas_mesh%latCell(i))
 	 sinlon = sin(mpas_mesh%lonCell(i))
 	 coslat = cos(mpas_mesh%latCell(i))
 	 coslon = cos(mpas_mesh%lonCell(i))
          do k = 1, nz_input
-           ux(k,i) = - zonal(k,i)*sinlon - meridional(k,i)*sinlat*coslon
-           uy(k,i) = zonal(k,i)*coslon - meridional(k,i)*sinlat*sinlon
-           uz(k,i) = meridional(k,i)*coslat 
+           u = varptrx(j,k)
+           v = varptry(j,k)
+           varptrx(j,k) = - u*sinlon - v*sinlat*coslon
+           varptry(j,k) = u*coslon - v*sinlat*sinlon
+           varptrz(j,k) = v*coslat 
          enddo
    enddo
+
+   nullify(varptrx)
+   nullify(varptry)
+   nullify(varptrz)
 
 end subroutine project_ull_to_uxyz 
 
