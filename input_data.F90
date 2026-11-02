@@ -291,28 +291,89 @@ subroutine project_ull_to_uxyz(mpas_mesh,field_zonal,field_meridional,field_wCar
 end subroutine project_ull_to_uxyz 
 
 
-subroutine project_uxyz_to_ull(mpas_mesh,ux,uy,uz,zonal,meridional)
+subroutine project_uxyz_to_ull(mpas_mesh,field_ux,field_uy,field_uz,field_zonal,field_meridional)
 
    type(mpas_mesh_type), intent(in)  :: mpas_mesh
-   real(esmf_kind_r8),  dimension(nz_input,mpas_mesh%nCells), intent(in) :: ux, uy, uz 
-   real(esmf_kind_r8),  dimension(nz_input,mpas_mesh%nCells), intent(inout) :: zonal, meridional
+   type(esmf_field), intent(in) :: field_ux, field_uy, field_uz
+   type(esmf_field), intent(out) :: field_zonal, field_meridional
 
-   integer :: i,k
-   real :: sinlat, sinlon, coslat, coslon
+   integer :: i,j,k
+   real(esmf_kind_r8) :: sinlat, sinlon, coslat, coslon, u, v
+   real(esmf_kind_r8), pointer :: varptrx(:,:), varptry(:,:), varptrz(:,:), ptru(:,:), ptrv(:,:)
+   integer :: rc, nCellsPerPET
+
+   type(esmf_mesh) :: mesh
+   integer :: nz
+
 
    ! This code projects Cartesian-coordinate winds back to zonal/meridional winds 
-   zonal = 0.0
-   meridional = 0.0
-   do i = 1, mpas_mesh%nCells
+   nCellsPerPET = mpas_mesh%nCellsPerPET
+
+   ! read in ux, uy, uz winds
+   call ESMF_FieldGet(field_ux, farrayPtr=varptrx, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+
+   call ESMF_FieldGet(field_uy, farrayPtr=varptry, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+
+   call ESMF_FieldGet(field_uz, farrayPtr=varptrz, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+
+   ! get the mesh from field_ux
+   call ESMF_FieldGet(field_ux, mesh=mesh, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldGet", rc)
+   nz = size(varptrx,2)
+
+   ! create temporary ESMF fields to hold the converted zonal/meridional winds for output
+   field_zonal = ESMF_FieldCreate(mesh, &
+                    typekind=ESMF_TYPEKIND_R8, &
+                    meshloc=ESMF_MESHLOC_ELEMENT, &
+                    name='uReconstructZonal', &
+                    ungriddedLBound=(/1/), &
+                    ungriddedUBound=(/nz/), rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldCreate", rc)
+
+
+   field_meridional = ESMF_FieldCreate(mesh, &
+                    typekind=ESMF_TYPEKIND_R8, &
+                    meshloc=ESMF_MESHLOC_ELEMENT, &
+                    name='uReconstructMeridional', &
+                    ungriddedLBound=(/1/), &
+                    ungriddedUBound=(/nz/), rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+       call error_handler("IN FieldCreate", rc)
+
+   ! Now get the ESMF fields to store the converted winds
+   call ESMF_FieldGet(field_zonal, farrayPtr=ptru, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+      call error_handler("IN FieldGet", rc)
+
+   call ESMF_FieldGet(field_meridional, farrayPtr=ptrv, rc=rc)
+   if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__line__,file=__file__)) &
+      call error_handler("IN FieldGet", rc)
+
+   do j = 1, nCellsPerPET
+         i = mpas_mesh%elemIDs(j)
 	 sinlat = sin(mpas_mesh%latCell(i))
 	 sinlon = sin(mpas_mesh%lonCell(i))
 	 coslat = cos(mpas_mesh%latCell(i))
 	 coslon = cos(mpas_mesh%lonCell(i))
          do k = 1, nz_input
-           zonal(k,i) = -ux(k,i)*sinlon + uy(k,i)*coslon
-           meridional(k,i) = -ux(k,i)*sinlat*coslon - uy(k,i)*sinlon*sinlat + uz(k,i)*coslat
+           ptru(j,k) = -varptrx(j,k)*sinlon + varptry(j,k)*coslon
+           ptrv(j,k) = -varptrx(j,k)*sinlat*coslon - varptry(j,k)*sinlon*sinlat + varptrz(j,k)*coslat
          enddo
    enddo
+
+   nullify(ptru)
+   nullify(ptrv)
+   nullify(varptrx)
+   nullify(varptry)
+   nullify(varptrz)
 
 end subroutine project_uxyz_to_ull
 

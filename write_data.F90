@@ -61,6 +61,8 @@ subroutine write_to_file(localpet,mpas_mesh,input_bundle,get_metadata_from_templ
    character(len=500)               :: fnames(3)
 
    integer :: save_zonal, save_meridional
+   type(esmf_field) :: orig_ux, orig_uy           ! saved handles for the Cartesan winds (if interp_cartesian winds=True)
+   type(esmf_field) :: tmp_u, tmp_v               ! converted winds created inside project_uxy_to_ull
 
    nCells = mpas_mesh%nCells
    nEdges = mpas_mesh%nEdges
@@ -206,139 +208,95 @@ subroutine write_to_file(localpet,mpas_mesh,input_bundle,get_metadata_from_templ
    if ( interp_cartesian_winds ) then
       save_zonal = -1
       save_meridional = -1
-   endif
+
+      ! if interpolating using Cartesian winds, first convert back to zonal/meridional winds prior to output
+      do i = 1,nvars_to_blend
+	  varname = variables_to_blend(i)
+	  if ( varname .eq. 'uReconstructZonal' ) then
+	      save_zonal = i
+	  elseif ( varname .eq. 'uReconstructMeridional' ) then 
+	      save_meridional = i
+	  elseif ( varname .eq. 'wCartesian' ) then 
+	     if ( save_zonal .ne. -1 .and. save_meridional .ne. -1 ) then 
+		 call project_uxyz_to_ull(mpas_mesh,fields(save_zonal),fields(save_meridional),fields(i),tmp_u,tmp_v)
+		 
+		 ! Save/swap fields for output
+		 orig_ux = fields(save_zonal)
+		 orig_uy = fields(save_meridional)
+		 fields(save_zonal)= tmp_u
+		 fields(save_meridional)= tmp_v
+		 if (localpet == 0 ) write(*,*) "[interp_cartesian_winds] Converting u_x, u_y, u_z back to uReconstructZonal, uReconstructMeridional"
+	     else
+		 if (localpet == 0) write(*,*) "ERROR [interp_cartesian_winds]: Could not find u_x, u_y, u_z to do wind conversion." 
+		 stop
+	     endif 
+	  endif
+       end do
+   end if  ! if interp_cartesian_winds
 
    do i = 1,nvars_to_blend
       varname = variables_to_blend(i)
       !call ESMF_FieldGet(fields(i),name=varname,rc=error)
       !call ESMF_FieldGet(fields(i), dimCount=ndims, rc=rc)
 
-      if ( interp_cartesian_winds ) then
-          if ( varname .eq. 'uReconstructZonal' ) then
-              save_zonal = i
-          elseif ( varname .eq. 'uReconstructMeridional' ) then 
-              save_meridional = i
-          endif
-      endif
+      if ( varname .eq. 'wCartesian') cycle  ! do not output wCartesian 
 
-      if ( interp_cartesian_winds .and. varname .eq. 'wCartesian' ) then 
+      !if (ndims==2) then
+      if ( nVertLevelsPerVariable(i) == 1 ) then
 
-          if ( save_zonal .ne. -1 .and. save_meridional .ne. -1 ) then 
+        !if (localpet==0) print*,"- CALL FieldGather for 2d field ", trim(varname)
+         call ESMF_FieldGather(fields(i), dum1d, rootPet=0, rc=error)
+         if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
+            call error_handler("IN FieldGather", error)
 
-              nz = nVertLevelsPerVariable(i)
+         if (localpet==0) then
+           !print*, "- WRITE TO FILE ", trim(varname)
+            dum1dt(:,1) = dum1d
+            error = nf90_inq_varid(ncidout, trim(adjustl(varname)), id_var2)
+            call netcdf_err(error, 'Getting ID for '//trim(adjustl(varname)) )
+            error = nf90_put_var( ncidout, id_var2, dum1dt, count=(/nCells,1/) )
+            call netcdf_err(error, 'WRITING RECORD')
+         endif
 
-              allocate(dummy_uzonal(nz,nCells,1))
-              allocate(dummy_umerid(nz,nCells,1))
+      else ! 3d variable
 
-             if (localpet==0) then
-               allocate(dum2d_x(nCells,nz)) ! this is the dimension order things are assigned to the ESMF field
-               allocate(dum2dt_x(nz,nCells,1))
-               allocate(dum2d_y(nCells,nz)) 
-               allocate(dum2dt_y(nz,nCells,1))
-	       allocate(dum2d_z(nCells,nz)) 
-               allocate(dum2dt_z(nz,nCells,1))
-             else
-               allocate(dum2d_x(0,0))
-               allocate(dum2dt_x(0,0,0))
-               allocate(dum2d_y(0,0))
-               allocate(dum2dt_y(0,0,0))
-	       allocate(dum2d_z(0,0))
-               allocate(dum2dt_z(0,0,0))
-             endif
-   
-             call ESMF_FieldGather(fields(save_zonal), dum2d_x, rootPet=0, rc=error)
-             if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-                  call error_handler("IN FieldGather", error)
-             call ESMF_FieldGather(fields(save_meridional), dum2d_y, rootPet=0, rc=error)
-             if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-                  call error_handler("IN FieldGather", error)
-             call ESMF_FieldGather(fields(i), dum2d_z, rootPet=0, rc=error)  ! index i = wCartesian
-             if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-                  call error_handler("IN FieldGather", error)
+         nz = nVertLevelsPerVariable(i)
 
-	     if (localpet==0) then
-                  dum2dt_x(:,:,1) = transpose(dum2d_x)
-                  dum2dt_y(:,:,1) = transpose(dum2d_y)
-                  dum2dt_z(:,:,1) = transpose(dum2d_z)
+         if (localpet==0) then
+            allocate(dum2d(nCells,nz)) ! this is the dimension order things are assigned to the ESMF field
+            allocate(dum2dt(nz,nCells,1))
+         else
+            allocate(dum2d(0,0))
+            allocate(dum2dt(0,0,0))
+         endif
 
-	          call project_uxyz_to_ull(mpas_mesh,dum2dt_x(:,:,1),dum2dt_y(:,:,1),dum2dt_z(:,:,1),dummy_uzonal(:,:,1),dummy_umerid(:,:,1))
+        !if (localpet==0) print*,"- CALL FieldGather for 3d field ", trim(varname)
+         call ESMF_FieldGather(fields(i), dum2d, rootPet=0, rc=error)
+         if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
+            call error_handler("IN FieldGather", error)
 
-                  error = nf90_inq_varid( ncidout, 'uReconstructZonal', id_var2)
-                  call netcdf_err(error, 'Getting ID for uReconstructZonal')
-                  error = nf90_put_var( ncidout, id_var2, dummy_uzonal, count=(/nz,nCells,1/) )
-                  call netcdf_err(error, 'WRITING RECORD' )
+         if (localpet==0) then
+           !print*, "- WRITE TO FILE ", trim(varname)
+            dum2dt(:,:,1) = transpose(dum2d)
+            error = nf90_inq_varid( ncidout, trim(adjustl(varname)), id_var2)
+            call netcdf_err(error, 'Getting ID for '//trim(adjustl(varname)) )
+            error = nf90_put_var( ncidout, id_var2, dum2dt, count=(/nz,nCells,1/) )
+            call netcdf_err(error, 'WRITING RECORD' )
+         endif
+         
+         deallocate(dum2d, dum2dt)
 
-		  error = nf90_inq_varid( ncidout, 'uReconstructMeridional', id_var2)
-                  call netcdf_err(error, 'Getting ID for uReconstructZonal')
-                  error = nf90_put_var( ncidout, id_var2, dummy_umerid, count=(/nz,nCells,1/) )
-                  call netcdf_err(error, 'WRITING RECORD' )
+      endif ! end if 3d vars
 
-		  write(*,*) "[interp_cartesian_winds] Converting u_x, u_y, u_z back to uReconstructZonal, uReconstructMeridional"
-            endif
-
-            deallocate(dum2d_x, dum2dt_x)
-            deallocate(dum2d_y, dum2dt_y)
-            deallocate(dum2d_z, dum2dt_z)
-            deallocate(dummy_uzonal)
-            deallocate(dummy_umerid)
-
-          else
-              if (localpet == 0) write(*,*) "ERROR [interp_cartesian_winds]: Could not find u_x, u_y, u_z to do wind conversion." 
-              stop
-          endif
-
-
-      else ! all other fields
-
-            !if (ndims==2) then
-            if ( nVertLevelsPerVariable(i) == 1 ) then
-      
-              !if (localpet==0) print*,"- CALL FieldGather for 2d field ", trim(varname)
-               call ESMF_FieldGather(fields(i), dum1d, rootPet=0, rc=error)
-               if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-                  call error_handler("IN FieldGather", error)
-      
-               if (localpet==0) then
-                 !print*, "- WRITE TO FILE ", trim(varname)
-                  dum1dt(:,1) = dum1d
-                  error = nf90_inq_varid(ncidout, trim(adjustl(varname)), id_var2)
-                  call netcdf_err(error, 'Getting ID for '//trim(adjustl(varname)) )
-                  error = nf90_put_var( ncidout, id_var2, dum1dt, count=(/nCells,1/) )
-                  call netcdf_err(error, 'WRITING RECORD')
-               endif
-      
-            else ! 3d variable
-      
-               nz = nVertLevelsPerVariable(i)
-      
-               if (localpet==0) then
-                  allocate(dum2d(nCells,nz)) ! this is the dimension order things are assigned to the ESMF field
-                  allocate(dum2dt(nz,nCells,1))
-               else
-                  allocate(dum2d(0,0))
-                  allocate(dum2dt(0,0,0))
-               endif
-      
-              !if (localpet==0) print*,"- CALL FieldGather for 3d field ", trim(varname)
-               call ESMF_FieldGather(fields(i), dum2d, rootPet=0, rc=error)
-               if(ESMF_logFoundError(rcToCheck=error,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-                  call error_handler("IN FieldGather", error)
-      
-               if (localpet==0) then
-                 !print*, "- WRITE TO FILE ", trim(varname)
-                  dum2dt(:,:,1) = transpose(dum2d)
-                  error = nf90_inq_varid( ncidout, trim(adjustl(varname)), id_var2)
-                  call netcdf_err(error, 'Getting ID for '//trim(adjustl(varname)) )
-                  error = nf90_put_var( ncidout, id_var2, dum2dt, count=(/nz,nCells,1/) )
-                  call netcdf_err(error, 'WRITING RECORD' )
-               endif
-               
-               deallocate(dum2d, dum2dt)
-      
-            endif ! end if 3d vars
-
-      endif  ! if wCartesian vs. all other fields
    enddo ! loop over fields
+
+   if ( interp_cartesian_winds ) then
+      fields(save_zonal)      = orig_ux   ! restoring the fields we want to use for interpolation
+      fields(save_meridional) = orig_uy
+      call ESMF_FieldDestroy(tmp_u, rc=error)
+      call ESMF_FieldDestroy(tmp_v, rc=error)
+   endif
+
 
    !--- write latitude, longitude
 
